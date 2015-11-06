@@ -8,14 +8,16 @@ import javax.ws.rs.client.*
 import javax.ws.rs.core.MediaType
 import javax.ws.rs.core.Response
 
-val login = System.getProperty("auth.login")
-val password = System.getProperty("auth.password")
-val authKey = BASE64Encoder().encode("$login:$password".toByteArray())
+val login = System.getProperty("auth.login") ?: throw IllegalArgumentException("System property auth.login is undefined")
+val password = System.getProperty("auth.password") ?: throw IllegalArgumentException("System property auth.password is undefined")
+val serverURI = System.getProperty("artifactory.uri") ?: "http://repo.labs.intellij.net"
+val repoName = System.getProperty("artifactory.repo") ?: "npm-ring"
+val packageName = System.getProperty("npm.package") ?: "ring-ui"
 
 fun main(args: Array<String>) {
 
     val client = ClientBuilder.newClient()
-    val server = client.target("http://repo.labs.intellij.net")
+    val server = client.target(serverURI)
 
     val ringUIBuilds = loadRingUIBuilds(server)
     val ringUIBuildsToDelete = ringUIBuilds.filterRingUIBuildsToDelete()
@@ -30,7 +32,7 @@ fun main(args: Array<String>) {
 }
 
 fun loadRingUIBuilds(server: WebTarget): List<ArtifactStats> {
-    val folderTarget = server.path("api/storage/npm-ring/ring-ui/-")
+    val folderTarget = server.path("api/storage/$repoName/$packageName/-")
     val folderInfo = folderTarget.request().get(ArtifactoryPath::class.java)
     val artifacts = folderInfo.children.mapWithProgress {
         val childTarget = folderTarget.path(it.uri).queryParam("stats", "")
@@ -56,12 +58,12 @@ fun List<ArtifactStats>.filterRingUIBuildsToDelete(): List<ArtifactStats> {
     }
 }
 
-val tgzNamePattern = Pattern.compile("\\Qhttp://repo.labs.intellij.net/npm-ring/ring-ui/-/\\E(.+)\\Q.tgz\\E")
+val tgzNamePattern = Pattern.compile("\\Q$serverURI/$repoName/$packageName/-/\\E(.+)\\Q.tgz\\E")
 fun deleteRingUIBuild(client: Client, tgzURI: String) {
     deleteArtifact(client, tgzURI)
     val m = tgzNamePattern.matcher(tgzURI)
     if (m.matches()) {
-        val jsonURI = "http://repo.labs.intellij.net/npm-ring/.npm/ring-ui/${m.group(1)}.json"
+        val jsonURI = "$serverURI/$repoName/.npm/$packageName/${m.group(1)}.json"
         deleteArtifact(client, jsonURI)
     } else {
         println("  Cannot find json for ${tgzURI}")
@@ -78,13 +80,13 @@ private fun deleteArtifact(client: Client, uri: String) {
 }
 
 fun reindexNPM(server: WebTarget) {
-    val response = server.path("api/npm/npm-ring/reindex").request().auth().post(Entity.entity("", MediaType.TEXT_PLAIN_TYPE))
+    val response = server.path("api/npm/$repoName/reindex").request().auth().post(Entity.entity("", MediaType.TEXT_PLAIN_TYPE))
     println(response.statusInfo)
     println(response.readEntity(String::class.java))
 }
 
 fun Invocation.Builder.auth(): Invocation.Builder {
-    return header("Authorization", "Basic $authKey")
+    return header("Authorization", "Basic ${BASE64Encoder().encode("$login:$password".toByteArray())}")
 }
 
 
@@ -92,7 +94,7 @@ enum class Age(val title: String, val threshold: Int) {
     ONE_WEEK("< 1 week", 0),
     MORE_THEN_WEEK("> 1 week", 2),
     MORE_THEN_MONTH("> 1 month", 3),
-    MORE_THEN_HALF_YEAR("> 6 month", 9)
+    MORE_THEN_HALF_YEAR("> 6 month", 5)
 }
 
 fun Calendar.plus(num: Int, unit: TimeUnit = TimeUnit.DAYS): Calendar {
